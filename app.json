@@ -19,7 +19,13 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.gabry_c0de.UTM_ED50",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBzsNmF8lOiR3EMHpH4BPDSSM4U5qABBL4"
+        }
+      }
     },
     "web": {
       "output": "static",
@@ -39,11 +45,30 @@
           }
         }
       ],
-      "expo-maps"
+      [
+        "expo-maps",
+        {
+          "requestLocationPermission": true,
+          "locationPermission": "Consenti a $(PRODUCT_NAME) di accedere alla tua posizione per mostrarti sulla mappa."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Consenti a $(PRODUCT_NAME) di usare la tua posizione."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d581c961-7ef1-4e6c-b294-3926a6a4b736"
+      }
+    },
+    "owner": "gabry_c0de"
   }
 }
