@@ -46,13 +46,6 @@
         }
       ],
       [
-        "expo-maps",
-        {
-          "requestLocationPermission": true,
-          "locationPermission": "Consenti a $(PRODUCT_NAME) di accedere alla tua posizione per mostrarti sulla mappa."
-        }
-      ],
-      [
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Consenti a $(PRODUCT_NAME) di usare la tua posizione."
