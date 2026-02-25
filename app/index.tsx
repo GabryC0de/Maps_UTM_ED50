@@ -1,78 +1,91 @@
 // React
-import { useEffect, useState } from "react";
-import { Platform, Text, Linking, Alert, StyleSheet, View } from "react-native";
+import { useEffect, useState, useRef } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
-// Expo
+// Expo & Librerie
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Location from "expo-location";
-// Importiamo la nuova libreria stabile!
-import MapView, {
-  Marker,
-  Circle,
-  Polyline,
-  PROVIDER_GOOGLE,
-} from "react-native-maps";
+import proj4 from "proj4";
+import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 
-// Definizione dei Tipi
+// Componenti
+import VMModal from "@/components/VMModal";
+
+// -----------------------------------------
+// 1. DEFINIZIONE DEI TIPI
+// -----------------------------------------
 type LocationData = {
   latitude: number;
   longitude: number;
   accuracy: number | null;
   timestamp: string;
-  heading?: number;
+};
+
+type ClickedPoint = {
+  lat: number;
+  lon: number;
+  est: string;
+  nord: string;
+  fuso: number;
+  emisfero: string;
 };
 
 export default function App() {
-  // Variabili
+  // -----------------------------------------
+  // 2. STATI DELL'APPLICAZIONE
+  // -----------------------------------------
   const [location, setLocation] = useState<LocationData | null>(null);
-  const [locLoader, setLocLoader] = useState<boolean>(false);
+  const [locLoader, setLocLoader] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [heading, setHeading] = useState<number>(0);
+  const [clickedPoint, setClickedPoint] = useState<ClickedPoint | null>(null);
 
-  // Funzione per generare le coordinate del cono di direzione
-  const generateConeCoordinates = (
-    lat: number,
-    lon: number,
-    heading: number,
-    radiusMeters: number = 100,
-  ) => {
-    const R = 6371000; // Raggio della Terra in metri
-    const d = radiusMeters / R;
-    const brng1 = ((heading - 30) * Math.PI) / 180;
-    const brng2 = ((heading + 30) * Math.PI) / 180;
-    const lat1 = (lat * Math.PI) / 180;
-    const lon1 = (lon * Math.PI) / 180;
+  // -----------------------------------------
+  // 3. FUNZIONI MATEMATICHE E DI CONVERSIONE
+  const [mapType, setMapType] = useState<string | null>("standard");
+  const mapRef = useRef<MapView>(null);
+  // -----------------------------------------
 
-    const lat2 = Math.asin(
-      Math.sin(lat1) * Math.cos(d) +
-        Math.cos(lat1) * Math.sin(d) * Math.cos(brng1),
-    );
-    const lon2 =
-      lon1 +
-      Math.atan2(
-        Math.sin(brng1) * Math.sin(d) * Math.cos(lat1),
-        Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
-      );
+  // Calcola dinamicamente le coordinate UTM ED50 per qualsiasi punto nel mondo
+  const handleMapPress = (event: any) => {
+    const { latitude, longitude } = event.nativeEvent.coordinate;
 
-    const lat3 = Math.asin(
-      Math.sin(lat1) * Math.cos(d) +
-        Math.cos(lat1) * Math.sin(d) * Math.cos(brng2),
-    );
-    const lon3 =
-      lon1 +
-      Math.atan2(
-        Math.sin(brng2) * Math.sin(d) * Math.cos(lat1),
-        Math.cos(d) - Math.sin(lat1) * Math.sin(lat3),
-      );
+    // A. Calcolo Matematico del Fuso UTM (da 1 a 60)
+    const fuso = Math.floor((longitude + 180) / 6) + 1;
 
-    return [
-      { latitude: lat, longitude: lon },
-      { latitude: (lat2 * 180) / Math.PI, longitude: (lon2 * 180) / Math.PI },
-      { latitude: (lat3 * 180) / Math.PI, longitude: (lon3 * 180) / Math.PI },
-      { latitude: lat, longitude: lon },
-    ];
+    // B. Controllo dell'Emisfero (Nord o Sud)
+    const isSouth = latitude < 0;
+    const stringaEmisfero = isSouth ? " +south" : "";
+
+    // C. Costruzione dinamica della stringa di proiezione ED50
+    const proj4String = `+proj=utm +zone=${fuso}${stringaEmisfero} +ellps=intl +towgs84=-87,-98,-121,0,0,0,0 +units=m +no_defs`;
+
+    // D. Conversione WGS84 -> UTM ED50
+    const [x, y] = proj4("WGS84", proj4String, [longitude, latitude]);
+
+    // E. Salvataggio nello stato
+    setClickedPoint({
+      lat: latitude,
+      lon: longitude,
+      est: x.toFixed(2),
+      nord: y.toFixed(2),
+      fuso: fuso,
+      emisfero: isSouth ? "S" : "N",
+    });
   };
 
-  // Funzioni per Permessi e GPS
+  // -----------------------------------------
+  // 4. GESTIONE PERMESSI E GPS (Real-Time)
+  // -----------------------------------------
   const requestPermissions = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== "granted") {
@@ -89,105 +102,270 @@ export default function App() {
     return true;
   };
 
-  const getCurrentLocation = async () => {
-    setLocLoader(true);
-    setError(null);
-
-    try {
-      const hasPermission = await requestPermissions();
-      if (!hasPermission) return;
-
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.BestForNavigation,
-      });
-
-      const head = await Location.getHeadingAsync();
-
-      setLocation({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        accuracy: loc.coords.accuracy,
-        timestamp: new Date(loc.timestamp).toLocaleTimeString(),
-        heading: head.trueHeading,
-      });
-
-      setHeading(head.trueHeading);
-    } catch (error: any) {
-      setError(error.message);
-    } finally {
-      setLocLoader(false);
+  const centerOnMe = () => {
+    if (location && mapRef.current) {
+      mapRef.current.animateCamera(
+        {
+          center: {
+            latitude: location.latitude,
+            longitude: location.longitude,
+          },
+          zoom: 17,
+          pitch: 40,
+        },
+        { duration: 1000 },
+      );
     }
   };
 
   useEffect(() => {
-    getCurrentLocation();
+    let locationSubscription: Location.LocationSubscription | null = null;
+    let headingSubscription: Location.LocationSubscription | null = null;
+
+    const startTracking = async () => {
+      setError(null);
+
+      try {
+        const hasPermission = await requestPermissions();
+        if (!hasPermission) {
+          setLocLoader(false);
+          return;
+        }
+
+        // Tracciamento Posizione
+        locationSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.BestForNavigation,
+            timeInterval: 1000,
+            distanceInterval: 1,
+          },
+          (newLocation) => {
+            setLocation({
+              latitude: newLocation.coords.latitude,
+              longitude: newLocation.coords.longitude,
+              accuracy: newLocation.coords.accuracy,
+              timestamp: new Date(newLocation.timestamp).toLocaleTimeString(),
+            });
+            setLocLoader(false);
+          },
+        );
+
+        // Tracciamento Bussola
+        headingSubscription = await Location.watchHeadingAsync((newHeading) => {
+          setHeading(newHeading.trueHeading);
+        });
+      } catch (err: any) {
+        setError(err.message);
+        setLocLoader(false);
+      }
+    };
+
+    startTracking();
+
+    // Cleanup alla chiusura
+    return () => {
+      if (locationSubscription) locationSubscription.remove();
+      if (headingSubscription) headingSubscription.remove();
+    };
   }, []);
 
-  // Se non abbiamo ancora la posizione iniziale, mostriamo un caricamento o una mappa di default
-  const initialRegion = location
-    ? {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        latitudeDelta: 0.005, // Regola lo zoom (più è piccolo, più è zoomato)
-        longitudeDelta: 0.005,
-      }
-    : {
-        latitude: 41.9028, // Roma di default
-        longitude: 12.4964,
-        latitudeDelta: 5,
-        longitudeDelta: 5,
-      };
+  // -----------------------------------------
+  // 5. RENDERIZZAZIONE INTERFACCIA
+  // -----------------------------------------
 
+  // Schermata di caricamento iniziale
+  if (locLoader || !location) {
+    return (
+      <View
+        style={[
+          styles.container,
+          { justifyContent: "center", alignItems: "center" },
+        ]}
+      >
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={{ marginTop: 15, fontSize: 16 }}>
+          Attesa del segnale GPS...
+        </Text>
+        {error && (
+          <Text
+            style={{
+              color: "red",
+              marginTop: 10,
+              padding: 20,
+              textAlign: "center",
+            }}
+          >
+            {error}
+          </Text>
+        )}
+      </View>
+    );
+  }
+
+  // Mappa principale
   return (
     <View style={styles.container}>
       <MapView
+        ref={mapRef}
         style={styles.map}
-        // PROVIDER_GOOGLE forza l'uso di Google Maps anche su iOS se lo desideri
         provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
-        initialRegion={initialRegion}
-        showsUserLocation={true} // Il pallino blu di default
-        showsMyLocationButton={true} // Il bottone per centrare la mappa
+        initialRegion={{
+          latitude: location.latitude,
+          longitude: location.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        }}
+        showsUserLocation={true}
+        showsCompass={true}
+        onPress={handleMapPress} // Intercetta il tocco per le coordinate UTM
+        mapType={mapType}
       >
-        {/* Usiamo i Componenti "Figli" di react-native-maps. Molto più pulito! */}
-        {location && (
-          <>
-            {/* Cerchio di accuracy */}
-            <Circle
-              center={{
-                latitude: location.latitude,
-                longitude: location.longitude,
-              }}
-              radius={location.accuracy || 10}
-              fillColor="rgba(66, 133, 244, 0.3)"
-              strokeColor="rgba(66, 133, 244, 0.8)"
-              strokeWidth={2}
-            />
-
-            {/* Cono di direzione visiva */}
-            <Polyline
-              coordinates={generateConeCoordinates(
-                location.latitude,
-                location.longitude,
-                heading,
-                100,
-              )}
-              strokeColor="rgba(255, 152, 0, 0.8)"
-              strokeWidth={2}
-              fillColor="rgba(255, 152, 0, 0.3)" // Su react-native-maps puoi anche riempire i poligoni!
-            />
-          </>
+        {/* Marker del punto cliccato dall'utente */}
+        {clickedPoint && (
+          <Marker
+            coordinate={{
+              latitude: clickedPoint.lat,
+              longitude: clickedPoint.lon,
+            }}
+            pinColor="red"
+            title={`UTM ED50 - Fuso ${clickedPoint.fuso}${clickedPoint.emisfero}`}
+            description={`E: ${clickedPoint.est} | N: ${clickedPoint.nord}`}
+          />
         )}
       </MapView>
+
+      {/* Riquadro superiore: Info GPS */}
+      <View style={styles.topBox}>
+        <Text style={styles.infoText}>
+          Precisione GPS: ±{location.accuracy?.toFixed(1)} m
+        </Text>
+      </View>
+
+      {/* Riquadro inferiore: Risultato coordinate cliccate */}
+      {clickedPoint && (
+        <View style={styles.bottomBox}>
+          <Text style={styles.boxTitle}>Punto Selezionato (ED50)</Text>
+          <Text style={styles.boxText}>
+            Fuso UTM: {clickedPoint.fuso} {clickedPoint.emisfero}
+          </Text>
+          <Text style={styles.boxText}>Est (X): {clickedPoint.est} m</Text>
+          <Text style={styles.boxText}>Nord (Y): {clickedPoint.nord} m</Text>
+        </View>
+      )}
+
+      <View style={styles.buttonsSidebar}>
+        <TouchableOpacity
+          style={[styles.touchable, { backgroundColor: "transparent" }]}
+        >
+          <Ionicons
+            style={styles.icons}
+            name="menu-outline"
+            color={"rgba(0, 0, 0, 0.65)"}
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.touchable]}
+          onPress={() => {
+            setMapType("satellite");
+          }}
+        >
+          <Text>Apri la finestra</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.touchable]} onPress={centerOnMe}>
+          <Ionicons
+            style={styles.icons}
+            name="locate-outline"
+            color={"rgba(0, 0, 0, 0.65)"}
+          />
+        </TouchableOpacity>
+        
+      </View>
     </View>
   );
 }
 
+// -----------------------------------------
+// 6. STILI CSS
+// -----------------------------------------
 const styles = StyleSheet.create({
+  icons: {
+    aspectRatio: 1,
+    fontSize: 30,
+  },
+  buttonsSidebar: {
+    position: "absolute",
+    borderRadius: 15,
+    top: 15,
+    right: 15,
+    backgroundColor: "rgb(255, 255, 255)",
+    display: "flex",
+    flexDirection: "column",
+    padding: 5,
+    gap: 5,
+  },
+  touchable: {
+    borderRadius: 15,
+    aspectRatio: 1,
+    width: 45,
+    backgroundColor: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "rgba(0, 0, 0, 0.6)",
+  },
   container: {
     flex: 1,
   },
   map: {
     width: "100%",
     height: "100%",
+  },
+  topBox: {
+    position: "absolute",
+    top: 15,
+    alignSelf: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    elevation: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
+  infoText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  bottomBox: {
+    position: "absolute",
+    bottom: 40,
+    alignSelf: "center",
+    backgroundColor: "rgba(30, 30, 30, 0.9)",
+    padding: 20,
+    borderRadius: 15,
+    minWidth: "85%",
+    alignItems: "center",
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+  },
+  boxTitle: {
+    color: "#4DA8DA",
+    fontWeight: "bold",
+    fontSize: 18,
+    marginBottom: 10,
+  },
+  boxText: {
+    color: "white",
+    fontSize: 16,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    marginBottom: 4,
   },
 });
